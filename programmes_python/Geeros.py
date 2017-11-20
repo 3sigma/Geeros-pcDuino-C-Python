@@ -14,7 +14,7 @@ from pyduino_pcduino import *
 
 # Imports pour l'IMU sur bus i2c
 import smbus
-import FaBo9Axis_MPU9250
+from mpu9250 import MPU9250
 import struct
 
 import time, sched
@@ -79,7 +79,7 @@ umin = -6. # valeur min (ou max en négatif) de la tension de commande du moteur
 vxmes = 0. # vitesse longitudinale mesurée
 ximes = 0. # vitesse de rotation mesurée
 Tf = 0.02 # constante de temps de filtrage de l'action dérivée du PID
-Kpvx = -20 # gain proportionnel pour l'asservissement de vitesse longitudinale
+Kpvx = -15.3 # gain proportionnel pour l'asservissement de vitesse longitudinale
 Kivx = -6.8 # gain intégral pour l'asservissement de vitesse longitudinale
 Kpomega = -1.87 # gain proportionnel pour l'asservissement de verticalité
 Kiomega = -23.3 # gain intégral pour l'asservissement de verticalité
@@ -158,7 +158,14 @@ def setup():
     servocam.write(servoref)
             
     # Initialisation de l'IMU
-    imu = FaBo9Axis_MPU9250.MPU9250()
+    # initIMU_OK = False
+    # while not initIMU_OK:
+        # try:
+            # imu = MPU9250()
+            # initIMU_OK = True
+        # except:
+            # print("Erreur init IMU")
+    imu = MPU9250()
     
     # On démarre seulement quand le gyropode dépasse la verticale
     # Pour que le gyropode démarre tout seul quand il est sur l'avant
