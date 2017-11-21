@@ -130,7 +130,9 @@
 					"settings": {
 						"title": "Vitesses de consigne",
 						"variablevxref": "datasources[\"ws\"][\"vref\"]",
-						"variablexiref": "datasources[\"ws\"][\"xiref\"]"
+						"gain_longi": 1,
+						"variablexiref": "datasources[\"ws\"][\"xiref\"]",
+						"gain_rot": "-1"
 					}
 				}
 			]
