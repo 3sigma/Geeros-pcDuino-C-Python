@@ -56,8 +56,6 @@ pwmMoteurDroit = 6
 directionMoteurGauche = 4
 pwmMoteurGauche = 5
 
-tensionBatterie = 7.4
-
 
 # Variables pour la commande en tension du moteur
 vref = 0. # consigne de vitesse
@@ -78,6 +76,10 @@ offset = 0.
 amplitude = 0.
 frequence = 0.
 moteurint = 0
+
+# Timeout de réception des données
+timeout = 2
+timeLastReceived = time.time()
 
 # Cadencement
 T0 = time.time()
@@ -103,8 +105,8 @@ def setup():
     pinMode(directionMoteurGauche, OUTPUT)
     pinMode(pwmMoteurGauche, OUTPUT)
     
-    CommandeMoteurDroit(0, tensionBatterie)
-    CommandeMoteurGauche(0, tensionBatterie)
+    CommandeMoteurDroit(0, tensionAlim)
+    CommandeMoteurGauche(0, tensionAlim)
     
     # La mesure de la tension d'alimentation se fait via un pont diviseur de rapport 3 / 13
     # Les entrées analogiques A0 et A1 sont sur 6 bits avant une plage de variation de 2V
@@ -126,7 +128,7 @@ def setup():
  
 # -- loop -- 
 def loop():
-    global i
+    global i, T0
     i = i+1
     s.enterabs( T0 + (i * dt), 1, CalculVitesse, ())
     s.run()
@@ -136,7 +138,8 @@ def loop():
 def CalculVitesse():
     global omegaDroit, omegaGauche, tdebut, codeurDroitDeltaPos, codeurGaucheDeltaPos, commandeDroit, commandeGauche, vref, \
         codeurDroitDeltaPosPrec, codeurGaucheDeltaPosPrec, \
-        idecimLectureTension, decimLectureTension, tensionAlim
+        typeSignal, offset, amplitude, frequence, moteurint, \
+        idecimLectureTension, decimLectureTension, tensionAlim, timeLastReceived, timeout
                 
     # Mesure de la vitesse du moteur grâce aux codeurs incrémentaux
     try:        
@@ -190,6 +193,11 @@ def CalculVitesse():
         vrefDroit = 0.
         vrefGauche = 0.
             
+    # Si on n'a pas reçu de données depuis un certain temps, celles-ci sont annulées
+    if (time.time()-timeLastReceived) > timeout:
+        vrefDroit = 0
+        vrefGauche = 0
+        
     # Calcul de la commande avant saturation
     commande_avant_sat_Droit = vrefDroit
     commande_avant_sat_Gauche = vrefGauche
@@ -210,8 +218,8 @@ def CalculVitesse():
         commandeGauche = commande_avant_sat_Gauche
 
 
-    CommandeMoteurDroit(commandeDroit, tensionBatterie)
-    CommandeMoteurGauche(commandeGauche, tensionBatterie)
+    CommandeMoteurDroit(commandeDroit, tensionAlim)
+    CommandeMoteurGauche(commandeGauche, tensionAlim)
     
     # Lecture de la tension d'alimentation
     if idecimLectureTension >= decimLectureTension:
@@ -304,8 +312,11 @@ class WSHandler(tornado.websocket.WebSocketHandler):
     
 
     def on_message(self, message):
-        global vref, vrefDroit, vrefGauche, typeSignal, offset, amplitude, frequence, Kp, Ki, Kd, moteurint
+        global vref, vrefDroit, vrefGauche, typeSignal, offset, amplitude, frequence, Kp, Ki, Kd, moteurint, timeLastReceived, socketOK
         jsonMessage = json.loads(message)
+        
+        # Annulation du timeout de réception des données
+        timeLastReceived = time.time()
         
         if jsonMessage.get('typeSignal') != None:
             typeSignal = int(jsonMessage.get('typeSignal'))
@@ -387,6 +398,7 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 #--- obligatoire pour lancement du code -- 
 if __name__=="__main__": # pour rendre le code executable 

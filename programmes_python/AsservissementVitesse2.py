@@ -56,10 +56,6 @@ pwmMoteurDroit = 6
 directionMoteurGauche = 4
 pwmMoteurGauche = 5
 
-tensionBatterie = 7.4
-
-omega = 0.
-
 # Les moteurs sont asservis en vitesse grâce à un régulateur de type PID
 # On déclare ci-dessous les variables et paramètres nécessaires à l'asservissement et au régulateur
 vref = 0. # consigne de vitesse
@@ -101,6 +97,10 @@ Ki = 5.0 # gain intégral du PID
 Kd = 0.000 # gain dérivé du PID
 moteurint = 0
 
+# Timeout de réception des données
+timeout = 2
+timeLastReceived = time.time()
+
 # Cadencement
 T0 = time.time()
 dt = 0.01
@@ -125,8 +125,8 @@ def setup():
     pinMode(directionMoteurGauche, OUTPUT)
     pinMode(pwmMoteurGauche, OUTPUT)
     
-    CommandeMoteurDroit(0, tensionBatterie)
-    CommandeMoteurGauche(0, tensionBatterie)
+    CommandeMoteurDroit(0, tensionAlim)
+    CommandeMoteurGauche(0, tensionAlim)
     
     # La mesure de la tension d'alimentation se fait via un pont diviseur de rapport 3 / 13
     # Les entrées analogiques A0 et A1 sont sur 6 bits avant une plage de variation de 2V
@@ -148,7 +148,7 @@ def setup():
  
 # -- loop -- 
 def loop():
-    global i
+    global i, T0
     i = i+1
     s.enterabs( T0 + (i * dt), 1, CalculVitesse, ())
     s.run()
@@ -156,7 +156,7 @@ def loop():
 
 
 def CalculVitesse():
-    global omegaDroit, omegaGauche, timeLastReceived, timedOut, commandeDroit, commandeGauche, vrefDroit, vrefGauche, vref, \
+    global omegaDroit, omegaGauche, timeLastReceived, commandeDroit, commandeGauche, vrefDroit, vrefGauche, vref, \
         P_x_Droit, I_x_Droit, D_x_Droit, P_x_Gauche, I_x_Gauche, D_x_Gauche, yprecDroit, yprecGauche, dt2, tprec, \
         typeSignal, offset, amplitude, frequence, Kp, Ki, Kd, moteurint, \
         Ti, Td, Tt, ad, bd, br, \
@@ -218,6 +218,11 @@ def CalculVitesse():
     dt2 = time.time() - tprec
     tprec = time.time()
     
+    # Si on n'a pas reçu de données depuis un certain temps, celles-ci sont annulées
+    if (time.time()-timeLastReceived) > timeout:
+        vrefDroit = 0.
+        vrefGauche = 0.
+        
     # Calcul du PID
     # Paramètres intermédiaires
     Ti = Ki/(Kp+0.01)
@@ -269,8 +274,8 @@ def CalculVitesse():
     yprecGauche = omegaGauche
 
     # Fin Calcul du PID
-    CommandeMoteurDroit(commandeDroit, tensionBatterie)
-    CommandeMoteurGauche(commandeGauche, tensionBatterie)
+    CommandeMoteurDroit(commandeDroit, tensionAlim)
+    CommandeMoteurGauche(commandeGauche, tensionAlim)
     
     # Lecture de la tension d'alimentation
     if idecimLectureTension >= decimLectureTension:
@@ -365,12 +370,11 @@ class WSHandler(tornado.websocket.WebSocketHandler):
     
 
     def on_message(self, message):
-        global vref, vrefDroit, vrefGauche, typeSignal, offset, amplitude, frequence, Kp, Ki, Kd, moteurint, timeLastReceived, timedOut
+        global vref, vrefDroit, vrefGauche, typeSignal, offset, amplitude, frequence, Kp, Ki, Kd, moteurint, timeLastReceived, socketOK
         jsonMessage = json.loads(message)
         
         # Annulation du timeout de réception des données
         timeLastReceived = time.time()
-        timedOut = False;
         
         if jsonMessage.get('typeSignal') != None:
             typeSignal = int(jsonMessage.get('typeSignal'))
@@ -462,6 +466,7 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 #--- obligatoire pour lancement du code -- 
 if __name__=="__main__": # pour rendre le code executable 

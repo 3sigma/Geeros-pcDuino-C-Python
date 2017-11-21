@@ -68,8 +68,6 @@ thetames = 0.
 
 servocam = Servo()
 
-tensionBatterie = 7.4
-
 # Les moteurs sont asservis en vitesse grâce à un régulateur de type PID
 # On déclare ci-dessous les variables et paramètres nécessaires à l'asservissement et au régulateur
 R = 0.045 # Rayon d'une roue
@@ -123,8 +121,7 @@ omegaprec = 0
 
 # Time out de réception des données
 timeout = 2
-timeLastReceived = 0
-timedOut = False
+timeLastReceived = time.time()
 
 T0 = time.time()
 dt = 0.01
@@ -143,7 +140,7 @@ tensionAlimMin = 6.4;
 
 #--- setup --- 
 def setup():
-    global imu, signe_ax, servoref, servocam, servoref
+    global imu, signe_ax, servoref, servocam, tensionAlim
     
     pinMode(directionMoteurDroit, OUTPUT)
     pinMode(pwmMoteurDroit, OUTPUT)
@@ -172,8 +169,8 @@ def setup():
     # et si on le redresse quand il est sur l'arrière
     signe_ax = -1
   
-    CommandeMoteurDroit(0, tensionBatterie)
-    CommandeMoteurGauche(0, tensionBatterie)
+    CommandeMoteurDroit(0, tensionAlim)
+    CommandeMoteurGauche(0, tensionAlim)
     
     # La mesure de la tension d'alimentation se fait via un pont diviseur de rapport 3 / 13
     # Les entrées analogiques A0 et A1 sont sur 6 bits avant une plage de variation de 2V
@@ -205,7 +202,7 @@ def loop():
 def CalculVitesse():
     global started, omega, thetames, \
         omegaDroit, omegaGauche, thetamesprec, omegaprec, codeurDroitDeltaPosPrec, codeurGaucheDeltaPosPrec, \
-        P_vx, I_vx, P_xi, I_xi, imu, thetaest, tau, omegaref, thetaref, timeLastReceived, timeout, timedOut, \
+        P_vx, I_vx, P_xi, I_xi, imu, thetaest, tau, omegaref, thetaref, timeLastReceived, timeout, \
         codeurDroitDeltaPos, codeurGaucheDeltaPos, commandeDroit, commandeGauche, vxmes, ximes, vxref, xiref, juststarted, \
         startedGeeros, signe_ax, x1, x2, dt2, tprec, \
         idecimLectureTension, decimLectureTension, tensionAlim
@@ -327,8 +324,7 @@ def CalculVitesse():
 
         
     # Si on n'a pas reçu de données depuis un certain temps, celles-ci sont annulées
-    if (time.time()-timeLastReceived) > timeout and not timedOut:
-        timedOut = True
+    if (time.time()-timeLastReceived) > timeout:
         x1 = 0.
         x2 = 0.
 
@@ -385,8 +381,8 @@ def CalculVitesse():
     commandeDroit = (commande_vx + commande_omega - commande_xi) * en
     commandeGauche = (commande_vx + commande_omega + commande_xi) * en
       
-    CommandeMoteurDroit(commandeDroit, tensionBatterie)
-    CommandeMoteurGauche(commandeGauche, tensionBatterie)
+    CommandeMoteurDroit(commandeDroit, tensionAlim)
+    CommandeMoteurGauche(commandeGauche, tensionAlim)
     
     # Lecture de la tension d'alimentation
     if idecimLectureTension >= decimLectureTension:
@@ -499,15 +495,14 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         self.callback.start()
     
     def on_message(self, message):
-        global x1, x2, Kpvx, Kivx, Kpxi, Kixi, servocam, timeLastReceived, timedOut, servoref
+        global x1, x2, Kpvx, Kivx, Kpxi, Kixi, servocam, timeLastReceived, servoref, socketOK
         jsonMessage = json.loads(message)
         
         # Annulation du timeout de réception des données
         timeLastReceived = time.time()
-        timedOut = False;
       
         if jsonMessage.get('vref') != None:
-            x1 = float(jsonMessage.get('vref'))/ 100
+            x1 = float(jsonMessage.get('vref')) / 100
             #print ("x1: %.2f" % x1)
         if jsonMessage.get('xiref') != None:
             x2 = (float(jsonMessage.get('xiref'))) * 3.141592 / 180
@@ -536,6 +531,10 @@ class WSHandler(tornado.websocket.WebSocketHandler):
             Kixi = float(jsonMessage.get('Kixi'))
             #print ("Kixi: %.2f" % Kixi)
         
+        if not socketOK:
+            x1 = 0
+            x2 = 0.
+  
 
     def on_close(self):
         global socketOK, commandeDroit, commandeGauche
@@ -545,7 +544,8 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         commandeGauche = 0.
 
     def sendToSocket(self):
-        global started, codeurDroitDeltaPos, codeurGaucheDeltaPos, socketOK, commandeDroit, commandeGauche, vxref, xiref, vxmes, ximes, omega, thetames
+        global started, codeurDroitDeltaPos, codeurGaucheDeltaPos, socketOK, commandeDroit, commandeGauche, vxref, xiref, \
+                vxmes, ximes, omega, thetames
         
         tcourant = time.time() - T0
         aEnvoyer = json.dumps({ 'Temps':("%.2f" % tcourant), \
@@ -613,6 +613,7 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # Gestion des segmentation fault
 def signal_handler2(signal, frame):

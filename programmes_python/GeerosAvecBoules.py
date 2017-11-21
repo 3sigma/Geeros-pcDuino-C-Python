@@ -13,9 +13,8 @@
 # Importe les fonctions Arduino pour Python
 from pyduino_pcduino import *
 
-# Imports pour l'IMU sur bus i2c
+# Imports pour le bus i2c
 import smbus
-import FaBo9Axis_MPU9250
 import struct
 
 import time, sched
@@ -67,8 +66,6 @@ omegaGauche = 0
 
 servocam = Servo()
 
-tensionBatterie = 7.4
-
 # Les moteurs sont asservis en vitesse grâce à un régulateur de type PID
 # On déclare ci-dessous les variables et paramètres nécessaires à l'asservissement et au régulateur
 R = 0.045 # Rayon d'une roue
@@ -98,8 +95,6 @@ commandeDroit = 0. # commande en tension calculée par le PID pour le moteur dro
 commandeGauche = 0. # commande en tension calculée par le PID pour le moteur gauche
 yprecvx = 0. # Mesure de la vitesse longitudinale au calcul précédent
 yprecxi = 0. # Mesure de la vitesse de rotation au calcul précédent
-codeurDroitDeltaPosPrec = 0.
-codeurGaucheDeltaPosPrec = 0.
 
 # Variables intermédiaires
 Ti = 0.
@@ -124,8 +119,7 @@ xiref = 0.
 
 # Time out de réception des données
 timeout = 2
-timeLastReceived = 0
-timedOut = False
+timeLastReceived = time.time()
 
 T0 = time.time()
 dt = 0.01
@@ -144,7 +138,7 @@ tensionAlimMin = 6.4;
 
 #--- setup --- 
 def setup():
-    global servoref, servocam
+    global servoref, servocam, tensionAlim
     
     pinMode(directionMoteurDroit, OUTPUT)
     pinMode(pwmMoteurDroit, OUTPUT)
@@ -160,8 +154,8 @@ def setup():
             
     
   
-    CommandeMoteurDroit(0, tensionBatterie)
-    CommandeMoteurGauche(0, tensionBatterie)
+    CommandeMoteurDroit(0, tensionAlim)
+    CommandeMoteurGauche(0, tensionAlim)
     
     # La mesure de la tension d'alimentation se fait via un pont diviseur de rapport 3 / 13
     # Les entrées analogiques A0 et A1 sont sur 6 bits avant une plage de variation de 2V
@@ -193,9 +187,9 @@ def loop():
 def CalculVitesse():
     global ticksCodeurDroit, ticksCodeurGauche, indiceTicksCodeurDroit, indiceTicksCodeurGauche, started, \
         omegaDroit, omegaGauche, ticksCodeurDroitTab, ticksCodeurGaucheTab, codeurDroitDeltaPosPrec, codeurGaucheDeltaPosPrec, \
-        ad, P_vx, I_vx, D_vx, P_xi, I_xi, D_xi, bd, Ti, yprecvx, yprecxi, timeLastReceived, timeout, timedOut, \
+        ad, P_vx, I_vx, D_vx, P_xi, I_xi, D_xi, bd, Ti, yprecvx, yprecxi, timeLastReceived, timeout, \
         codeurDroitDeltaPos, codeurGaucheDeltaPos, commandeDroit, commandeGauche, vxmes, ximes, vxref, xiref, dt2, tprec, \
-        idecimLectureTension, decimLectureTension, tensionAlim
+        idecimLectureTension, decimLectureTension, tensionAlim, x1, x2
         
         
     # Mesure de la vitesse du moteur grâce aux codeurs incrémentaux
@@ -222,6 +216,11 @@ def CalculVitesse():
     # Atmega328 qui est présent dans Geeros
     omegaDroit = -2 * ((2 * 3.141592 * codeurDroitDeltaPos) / 1632) / (Nmoy * dt)  # en rad/s
     omegaGauche = 2 * ((2 * 3.141592 * codeurGaucheDeltaPos) / 1632) / (Nmoy * dt)  # en rad/s
+
+    # Si on n'a pas reçu de données depuis un certain temps, celles-ci sont annulées
+    if (time.time()-timeLastReceived) > timeout:
+        x1 = 0.
+        x2 = 0.
 
     # Application de la consigne lue
     vxref = x1
@@ -290,8 +289,8 @@ def CalculVitesse():
     commandeDroit = (commande_vx - commande_xi);
     commandeGauche = (commande_vx + commande_xi);
       
-    CommandeMoteurDroit(commandeDroit, tensionBatterie)
-    CommandeMoteurGauche(commandeGauche, tensionBatterie)
+    CommandeMoteurDroit(commandeDroit, tensionAlim)
+    CommandeMoteurGauche(commandeGauche, tensionAlim)
     
     # Lecture de la tension d'alimentation
     if idecimLectureTension >= decimLectureTension:
@@ -404,13 +403,12 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         self.callback.start()
     
     def on_message(self, message):
-        global x1, x2, Kp2, Ki2, Kd2, Kpxi2, Kixi2, Kdxi2, servocam, timeLastReceived, timedOut, servoref
+        global x1, x2, Kp2, Ki2, Kd2, Kpxi2, Kixi2, Kdxi2, servocam, timeLastReceived, servoref, socketOK
 
         jsonMessage = json.loads(message)
         
         # Annulation du timeout de réception des données
         timeLastReceived = time.time()
-        timedOut = False;
       
         if jsonMessage.get('vref') != None:
             x1 = float(jsonMessage.get('vref')) / 100
@@ -448,6 +446,10 @@ class WSHandler(tornado.websocket.WebSocketHandler):
             Kdxi2 = float(jsonMessage.get('Kdxi2ref'))
             #print ("Kdxi2: %.2f" % Kdxi2)
         
+        if not socketOK:
+            x1 = 0
+            x2 = 0.
+  
 
     def on_close(self):
         global socketOK, commandeDroit, commandeGauche
@@ -521,6 +523,7 @@ def signal_handler(signal, frame):
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # Gestion des segmentation fault
 def signal_handler2(signal, frame):
