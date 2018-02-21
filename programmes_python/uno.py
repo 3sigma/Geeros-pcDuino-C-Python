@@ -83,6 +83,9 @@ class Uno(object):
         else:
             return False
 
+    def servo(self, angle):
+        self.command(9, map(ord, list(struct.pack('h', angle))))
+
     def test_read8(self):
         try:
             self.read_unpack(8, "cccccccc")

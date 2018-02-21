@@ -6,7 +6,7 @@
 # http://boutique.3sigma.fr/12-robots
 #
 # Auteur: 3Sigma
-# Version 3.0 - 01/10/2017
+# Version 3.1 - 20/02/2018
 ##################################################################################
 
 # Importe les fonctions Arduino pour Python
@@ -66,7 +66,6 @@ omegaGauche = 0
 omega = 0.
 thetames = 0.
 
-servocam = Servo()
 
 # Les moteurs sont asservis en vitesse grâce à un régulateur de type PID
 # On déclare ci-dessous les variables et paramètres nécessaires à l'asservissement et au régulateur
@@ -100,9 +99,8 @@ commandeGauche = 0. # commande en tension calculée par le PID pour le moteur ga
 # Variables utilisées pour les données reçues
 x1 = 0.
 x2 = 0.
-servoref = 45
-Kp2 = 1.0
-Ki2 = 1.0
+Kp2 = 1.
+Ki2 = 1.
 Kpxi2 = 1.
 Kixi2 = 1.
 
@@ -140,7 +138,7 @@ tensionAlimMin = 6.4;
 
 #--- setup --- 
 def setup():
-    global imu, signe_ax, servoref, servocam, tensionAlim
+    global imu, signe_ax, tensionAlim
     
     pinMode(directionMoteurDroit, OUTPUT)
     pinMode(pwmMoteurDroit, OUTPUT)
@@ -150,10 +148,6 @@ def setup():
     
     pinMode(13, OUTPUT)
 
-    # Attache le servomoteur à la broche 10
-    servocam.attach(10)
-    servocam.write(servoref)
-            
     # Initialisation de l'IMU
     # initIMU_OK = False
     # while not initIMU_OK:
@@ -162,7 +156,7 @@ def setup():
             # initIMU_OK = True
         # except:
             # print("Erreur init IMU")
-    imu = MPU9250()
+    imu = MPU9250(i2cbus=2, address=0x69)
     
     # On démarre seulement quand le gyropode dépasse la verticale
     # Pour que le gyropode démarre tout seul quand il est sur l'avant
@@ -171,6 +165,9 @@ def setup():
   
     CommandeMoteurDroit(0, tensionAlim)
     CommandeMoteurGauche(0, tensionAlim)
+    
+    # Initialisation de la position du servo
+    uno.servo(45)
     
     # La mesure de la tension d'alimentation se fait via un pont diviseur de rapport 3 / 13
     # Les entrées analogiques A0 et A1 sont sur 6 bits avant une plage de variation de 2V
@@ -192,7 +189,7 @@ def setup():
  
 # -- loop -- 
 def loop():
-    global i
+    global i, T0
     i = i+1
     s.enterabs( T0 + (i * dt), 1, CalculVitesse, ())
     s.run()
@@ -210,6 +207,8 @@ def CalculVitesse():
     # Tant que l'asservissement de verticalité n'est pas activé
     while not startedGeeros:
 
+        time.sleep(0.005)
+        
         tprec = time.time() - dt
                 
         # Geeros vient de chuter
@@ -246,25 +245,29 @@ def CalculVitesse():
             I_xi = 0.
             thetaest = 0.
 
-    # Mesure de la vitesse du moteur grâce aux codeurs incrémentaux
-    try:        
+    # Mesure de la vitesse des moteurs grâce aux codeurs incrémentaux
+    try:
         codeurDroitDeltaPos = uno.read_codeurDroitDeltaPos()
-        
-        codeurDroitDeltaPosPrec = codeurDroitDeltaPos
+        if abs(codeurDroitDeltaPos) > 1000:
+            #print "Values out of range"
+            codeurDroitDeltaPos = codeurDroitDeltaPosPrec
+        else:
+            codeurDroitDeltaPosPrec = codeurDroitDeltaPos
     except:
         #print "Erreur lecture codeur droit"
         codeurDroitDeltaPos = codeurDroitDeltaPosPrec
-        pass
-    
-    try:        
+
+    try:
         codeurGaucheDeltaPos = uno.read_codeurGaucheDeltaPos()
-        
-        codeurGaucheDeltaPosPrec = codeurGaucheDeltaPos
+        if abs(codeurGaucheDeltaPos) > 1000:
+            #print "Values out of range"
+            codeurGaucheDeltaPos = codeurGaucheDeltaPosPrec
+        else:
+            codeurGaucheDeltaPosPrec = codeurGaucheDeltaPos
     except:
         #print "Erreur lecture codeur gauche"
         codeurGaucheDeltaPos = codeurGaucheDeltaPosPrec
-        pass
-    
+
     # C'est bien dt qu'on utilise ici et non pas dt2 (voir plus loin l'explication de dt2)
     # car codeurDroitDeltaPos et codeurGaucheDeltaPos sont mesurés en temps-réel par le micro-contrôleur
     # Atmega328 qui est présent dans Geeros
@@ -366,7 +369,7 @@ def CalculVitesse():
     # Calcul du PI sur xi
     
     # Terme proportionnel
-    P_xi = Kpxi * (xiref - ximes)
+    P_xi = Kpxi * Kpxi2 * (xiref - ximes)
 
     # Calcul de la commande
     commande_xi = P_xi + I_xi
@@ -464,11 +467,9 @@ def CommandeMoteurGauche(commande, tensionAlim):
 
             
 def emitData():
-    global servocam, tprec
+    global tprec
     # Délai nécessaire pour que le serveur de Websocket ait le temps de démarrer
     delay(5000)
-    servocam.detach()
-    servocam.attach(10)
     digitalWrite(13,HIGH)
         
     # Démarrage du client Websocket (indispensable d'avoir toujours un client connecté)
@@ -495,7 +496,8 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         self.callback.start()
     
     def on_message(self, message):
-        global x1, x2, Kpvx, Kivx, Kpxi, Kixi, servocam, timeLastReceived, servoref, socketOK
+        global x1, x2, Kp2, Ki2, Kpxi2, Kixi2, timeLastReceived, socketOK
+
         jsonMessage = json.loads(message)
         
         # Annulation du timeout de réception des données
@@ -508,28 +510,24 @@ class WSHandler(tornado.websocket.WebSocketHandler):
             x2 = (float(jsonMessage.get('xiref'))) * 3.141592 / 180
             #print ("x2: %.2f" % x2)
         if jsonMessage.get('servoref') != None:
-            servorefprec = servoref
-            servoref = float(jsonMessage.get('servoref'))
-            if servoref != servorefprec:
-                servocam.attach(10)
-                servocam.write(servoref)
-                servocam.write(servoref)
-                servocam.write(servoref)
-            else:
-                servocam.detach()
+            servoref = int(jsonMessage.get('servoref'))
+            try:
+                uno.servo(servoref)
+            except:
+                pass
             #print ("servoref: %d" % servoref)
-        if jsonMessage.get('Kpvx') != None:
-            Kpvx = float(jsonMessage.get('Kpvx'))
-            #print ("Kpvx: %.2f" % Kpvx)
-        if jsonMessage.get('Kivx') != None:
-            Kivx = float(jsonMessage.get('Kivx'))
-            #print ("Kivx: %.2f" % Kivx)
+        if jsonMessage.get('Kp2ref') != None:
+            Kp2 = float(jsonMessage.get('Kp2ref'))
+            #print ("Kp2: %.2f" % Kp2)
+        if jsonMessage.get('Ki2ref') != None:
+            Ki2 = float(jsonMessage.get('Ki2ref'))
+            #print ("Ki2: %.2f" % Ki2)
         if jsonMessage.get('Kpxi2ref') != None:
-            Kpxi = float(jsonMessage.get('Kpxi'))
-            #print ("Kpxi: %.2f" % Kpxi)
-        if jsonMessage.get('Kixi') != None:
-            Kixi = float(jsonMessage.get('Kixi'))
-            #print ("Kixi: %.2f" % Kixi)
+            Kpxi2 = float(jsonMessage.get('Kpxi2ref'))
+            #print ("Kpxi2: %.2f" % Kpxi2)
+        if jsonMessage.get('Kixi2ref') != None:
+            Kixi2 = float(jsonMessage.get('Kixi2ref'))
+            #print ("Kixi2: %.2f" % Kixi2)
         
         if not socketOK:
             x1 = 0
@@ -545,7 +543,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
 
     def sendToSocket(self):
         global started, codeurDroitDeltaPos, codeurGaucheDeltaPos, socketOK, commandeDroit, commandeGauche, vxref, xiref, \
-                vxmes, ximes, omega, thetames
+                vxmes, ximes, omega, thetames, T0
         
         tcourant = time.time() - T0
         aEnvoyer = json.dumps({ 'Temps':("%.2f" % tcourant), \
@@ -556,7 +554,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
                                 'omegaGauche':("%.2f" % omegaGauche), \
                                 'thetames':("%.3f" % thetames), \
                                 'Consigne vitesse longitudinale':("%.2f" % x1), \
-                                'Consigne vitesse de rotation':("%.2f" % x2), \
+                                'Consigne vitesse de rotation':("%.2f" % (180 * x2/3.141592)), \
                                 'Vitesse longitudinale':("%.2f" % vxmes), \
                                 'Vitesse de rotation':("%.2f" % (180 * ximes/3.141592)), \
                                 'Raw':("%.2f" % tcourant) + "," + \
@@ -602,13 +600,12 @@ def startTornado():
 
 # Gestion du CTRL-C
 def signal_handler(signal, frame):
-    global commandeDroit, commandeGauche, servovam
+    global commandeDroit, commandeGauche
     print 'You pressed Ctrl+C!'
     commandeDroit = 0.
     commandeGauche = 0.
     CommandeMoteurDroit(0, 5)
     CommandeMoteurGauche(0, 5)
-    servocam.detach()
     digitalWrite(13, LOW)
     sys.exit(0)
 

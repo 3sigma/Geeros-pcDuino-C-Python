@@ -7,7 +7,7 @@
 # http://boutique.3sigma.fr/12-robots
 #
 # Auteur: 3Sigma
-# Version 3.0 - 01/10/2017
+# Version 3.1 - 20/02/2018
 ##################################################################################
 
 # Importe les fonctions Arduino pour Python
@@ -64,7 +64,6 @@ omegaDroit = 0
 omegaGauche = 0
 
 
-servocam = Servo()
 
 # Les moteurs sont asservis en vitesse grâce à un régulateur de type PID
 # On déclare ci-dessous les variables et paramètres nécessaires à l'asservissement et au régulateur
@@ -104,7 +103,6 @@ bd = 0.
 # Variables utilisées pour les données reçues
 x1 = 0.
 x2 = 0.
-servoref = 45.
 Kp2 = 1.
 Ki2 = 1.
 Kd2 = 1.
@@ -138,7 +136,7 @@ tensionAlimMin = 6.4;
 
 #--- setup --- 
 def setup():
-    global servoref, servocam, tensionAlim
+    global tensionAlim
     
     pinMode(directionMoteurDroit, OUTPUT)
     pinMode(pwmMoteurDroit, OUTPUT)
@@ -148,14 +146,14 @@ def setup():
     
     pinMode(13, OUTPUT)
 
-    # Attache le servomoteur à la broche 10
-    servocam.attach(10)
-    servocam.write(servoref)
             
     
   
     CommandeMoteurDroit(0, tensionAlim)
     CommandeMoteurGauche(0, tensionAlim)
+    
+    # Initialisation de la position du servo
+    uno.servo(45)
     
     # La mesure de la tension d'alimentation se fait via un pont diviseur de rapport 3 / 13
     # Les entrées analogiques A0 et A1 sont sur 6 bits avant une plage de variation de 2V
@@ -177,7 +175,7 @@ def setup():
  
 # -- loop -- 
 def loop():
-    global i
+    global i, T0
     i = i+1
     s.enterabs( T0 + (i * dt), 1, CalculVitesse, ())
     s.run()
@@ -185,31 +183,35 @@ def loop():
 
 
 def CalculVitesse():
-    global ticksCodeurDroit, ticksCodeurGauche, indiceTicksCodeurDroit, indiceTicksCodeurGauche, started, \
-        omegaDroit, omegaGauche, ticksCodeurDroitTab, ticksCodeurGaucheTab, codeurDroitDeltaPosPrec, codeurGaucheDeltaPosPrec, \
+    global started, \
+        omegaDroit, omegaGauche, codeurDroitDeltaPosPrec, codeurGaucheDeltaPosPrec, \
         ad, P_vx, I_vx, D_vx, P_xi, I_xi, D_xi, bd, Ti, yprecvx, yprecxi, timeLastReceived, timeout, \
         codeurDroitDeltaPos, codeurGaucheDeltaPos, commandeDroit, commandeGauche, vxmes, ximes, vxref, xiref, dt2, tprec, \
         idecimLectureTension, decimLectureTension, tensionAlim, x1, x2
         
         
     # Mesure de la vitesse du moteur grâce aux codeurs incrémentaux
-    try:        
+    try:
         codeurDroitDeltaPos = uno.read_codeurDroitDeltaPos()
-        
-        codeurDroitDeltaPosPrec = codeurDroitDeltaPos
+        if abs(codeurDroitDeltaPos) > 1000:
+            #print "Values out of range"
+            codeurDroitDeltaPos = codeurDroitDeltaPosPrec
+        else:
+            codeurDroitDeltaPosPrec = codeurDroitDeltaPos
     except:
         #print "Erreur lecture codeur droit"
         codeurDroitDeltaPos = codeurDroitDeltaPosPrec
-        pass
-    
-    try:        
+
+    try:
         codeurGaucheDeltaPos = uno.read_codeurGaucheDeltaPos()
-        
-        codeurGaucheDeltaPosPrec = codeurGaucheDeltaPos
+        if abs(codeurGaucheDeltaPos) > 1000:
+            #print "Values out of range"
+            codeurGaucheDeltaPos = codeurGaucheDeltaPosPrec
+        else:
+            codeurGaucheDeltaPosPrec = codeurGaucheDeltaPos
     except:
         #print "Erreur lecture codeur gauche"
         codeurGaucheDeltaPos = codeurGaucheDeltaPosPrec
-        pass
     
     # C'est bien dt qu'on utilise ici et non pas dt2 (voir plus loin l'explication de dt2)
     # car codeurDroitDeltaPos et codeurGaucheDeltaPos sont mesurés en temps-réel par le micro-contrôleur
@@ -373,10 +375,8 @@ def CommandeMoteurGauche(commande, tensionAlim):
             
 def emitData():
     global tprec
-    # Délai nécessaire pour que le serveur ait le temps de démarrer
+    # Délai nécessaire pour que le serveur de Websocket ait le temps de démarrer
     delay(5000)
-    servocam.detach()
-    servocam.attach(10)
     digitalWrite(13,HIGH)
         
     # Démarrage du client Websocket (indispensable d'avoir toujours un client connecté)
@@ -403,7 +403,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         self.callback.start()
     
     def on_message(self, message):
-        global x1, x2, Kp2, Ki2, Kd2, Kpxi2, Kixi2, Kdxi2, servocam, timeLastReceived, servoref, socketOK
+        global x1, x2, Kp2, Ki2, Kd2, Kpxi2, Kixi2, Kdxi2, timeLastReceived, socketOK
 
         jsonMessage = json.loads(message)
         
@@ -417,15 +417,11 @@ class WSHandler(tornado.websocket.WebSocketHandler):
             x2 = (float(jsonMessage.get('xiref'))) * 3.141592 / 180
             #print ("x2: %.2f" % x2)
         if jsonMessage.get('servoref') != None:
-            servorefprec = servoref
-            servoref = float(jsonMessage.get('servoref'))
-            if servoref != servorefprec:
-                servocam.attach(10)
-                servocam.write(servoref)
-                servocam.write(servoref)
-                servocam.write(servoref)
-            else:
-                servocam.detach()
+            servoref = int(jsonMessage.get('servoref'))
+            try:
+                uno.servo(servoref)
+            except:
+                pass
             #print ("servoref: %d" % servoref)
         if jsonMessage.get('Kp2ref') != None:
             Kp2 = float(jsonMessage.get('Kp2ref'))
@@ -459,12 +455,13 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         commandeGauche = 0.
 
     def sendToSocket(self):
-        global started, codeurDroitDeltaPos, codeurGaucheDeltaPos, socketOK, commandeDroit, commandeGauche, vxref, xiref, vxmes, ximes
+        global started, codeurDroitDeltaPos, codeurGaucheDeltaPos, socketOK, commandeDroit, commandeGauche, vxref, xiref, \
+                vxmes, ximes, T0
 
         tcourant = time.time() - T0
         aEnvoyer = json.dumps( {'Temps':("%.2f" % tcourant),
                                 'Consigne vitesse longitudinale':("%.2f" % x1),
-                                'Consigne vitesse de rotation':("%.2f" % x2),
+                                'Consigne vitesse de rotation':("%.2f" % (180 * x2/3.141592)),
                                 'Vitesse longitudinale':("%.2f" % vxmes),
                                 'Vitesse de rotation':("%.2f" % (180 * ximes/3.141592)),
                                 'omegaDroit':("%.2f" % omegaDroit),
@@ -512,13 +509,12 @@ def startTornado():
 
 # Gestion du CTRL-C
 def signal_handler(signal, frame):
-    global commandeDroit, commandeGauche, servovam
+    global commandeDroit, commandeGauche
     print 'You pressed Ctrl+C!'
     commandeDroit = 0.
     commandeGauche = 0.
     CommandeMoteurDroit(0, 5)
     CommandeMoteurGauche(0, 5)
-    servocam.detach()
     digitalWrite(13, LOW)
     sys.exit(0)
 
