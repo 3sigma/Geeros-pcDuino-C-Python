@@ -7,7 +7,7 @@
 # http://boutique.3sigma.fr/12-robots
 #
 # Auteur: 3Sigma
-# Version 3.0 - 01/10/2017
+# Version 3.1 - 20/02/2017
 ##################################################################################
 
 # Importe les fonctions Arduino pour Python
@@ -19,6 +19,7 @@ import threading
 import signal
 import json
 import sys
+import math
 
 # Pour la détection d'adresse IP
 import socket
@@ -175,7 +176,7 @@ def CalculVitesse():
             vref = offset + amplitude
     else: # sinus
         if frequence > 0:
-            vref = offset + amplitude * sin(2*3.141592*frequence*tcourant)
+            vref = offset + amplitude * math.sin(2*3.141592*frequence*tcourant)
         else:
             vref = offset + amplitude
 

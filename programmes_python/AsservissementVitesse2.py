@@ -7,7 +7,7 @@
 # http://boutique.3sigma.fr/12-robots
 #
 # Auteur: 3Sigma
-# Version 3.0 - 01/10/2017
+# Version 3.1 - 20/02/2017
 ##################################################################################
 
 # Importe les fonctions Arduino pour Python
@@ -19,6 +19,7 @@ import threading
 import signal
 import json
 import sys
+import math
 
 # Pour la détection d'adresse IP
 import socket
@@ -158,6 +159,7 @@ def loop():
 def CalculVitesse():
     global omegaDroit, omegaGauche, timeLastReceived, commandeDroit, commandeGauche, vrefDroit, vrefGauche, vref, \
         P_x_Droit, I_x_Droit, D_x_Droit, P_x_Gauche, I_x_Gauche, D_x_Gauche, yprecDroit, yprecGauche, dt2, tprec, \
+        codeurDroitDeltaPos, codeurGaucheDeltaPos, codeurGaucheDeltaPosPrec, codeurDroitDeltaPosPrec, \
         typeSignal, offset, amplitude, frequence, Kp, Ki, Kd, moteurint, \
         Ti, Td, Tt, ad, bd, br, \
         idecimLectureTension, decimLectureTension, tensionAlim
@@ -196,7 +198,7 @@ def CalculVitesse():
             vref = offset + amplitude
     else: # sinus
         if frequence > 0:
-            vref = offset + amplitude * sin(2*3.141592*frequence*tcourant)
+            vref = offset + amplitude * math.sin(2*3.141592*frequence*tcourant)
         else:
             vref = offset + amplitude
 
@@ -230,7 +232,7 @@ def CalculVitesse():
         ad = Tf/(Tf+dt2)
         bd = Kd/(Tf+dt2)
         Td = Kp/Kd
-        Tt = sqrt(Ti*Td)
+        Tt = math.sqrt(Ti*Td)
     else: # Si PI
         ad = 0.
         bd = 0.
