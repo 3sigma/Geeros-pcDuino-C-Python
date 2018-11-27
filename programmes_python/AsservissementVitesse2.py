@@ -7,7 +7,7 @@
 # http://boutique.3sigma.fr/12-robots
 #
 # Auteur: 3Sigma
-# Version 3.1 - 20/02/2017
+# Version 3.2 - 04/04/2018
 ##################################################################################
 
 # Importe les fonctions Arduino pour Python
@@ -70,22 +70,12 @@ commande_avant_sat_Droit = 0. # valeur de la commande avant la saturation (voir 
 commande_avant_sat_Gauche = 0. # valeur de la commande avant la saturation (voir ci-dessous) pour le moteur gauche
 umax = 6. # valeur max de la tension de commande du moteur
 umin = -6. # valeur min (ou max en négatif) de la tension de commande du moteur
-yprecDroit = 0. # mesure de la vitesse du moteur droit au calcul précédent
-yprecGauche = 0. # mesure de la vitesse du moteur gauche au calcul précédent
+
+I_x = [0., 0.]
+D_x = [0., 0.]
+erreurprec = [0., 0.] # mesure de la vitesse du moteur droit au calcul précédent
+
 Tf = 0.02 # constante de temps de filtrage de l'action dérivée du PID
-P_x_Droit = 0. # valeur de l'action proportionnelle sur le moteur droit
-I_x_Droit = 0. # valeur de l'action intégrale sur le moteur droit
-D_x_Droit = 0. # valeur de l'action dérivée sur le moteur droit
-P_x_Gauche = 0. # valeur de l'action proportionnelle sur le moteur gauche
-I_x_Gauche = 0. # valeur de l'action intégrale sur le moteur gauche
-D_x_Gauche = 0. # valeur de l'action dérivée sur le moteur gauche
-# Variables intermédiaires
-Ti = 0.
-Td = 0.
-Tt = 0.
-ad = 0.
-bd = 0.
-br = 0.
 
 
 # Variables utilisées pour les données reçues
@@ -93,8 +83,8 @@ typeSignal = 0
 offset = 0.
 amplitude = 0.
 frequence = 0.
-Kp = 0.25 # gain proportionnel du PID
-Ki = 5.0 # gain intégral du PID
+Kp = 0.05 # gain proportionnel du PID
+Ki = 2.0 # gain intégral du PID
 Kd = 0.000 # gain dérivé du PID
 moteurint = 0
 
@@ -158,10 +148,8 @@ def loop():
 
 def CalculVitesse():
     global omegaDroit, omegaGauche, timeLastReceived, commandeDroit, commandeGauche, vrefDroit, vrefGauche, vref, \
-        P_x_Droit, I_x_Droit, D_x_Droit, P_x_Gauche, I_x_Gauche, D_x_Gauche, yprecDroit, yprecGauche, dt2, tprec, \
-        codeurDroitDeltaPos, codeurGaucheDeltaPos, codeurGaucheDeltaPosPrec, codeurDroitDeltaPosPrec, \
+        dt2, tprec, codeurDroitDeltaPos, codeurGaucheDeltaPos, codeurGaucheDeltaPosPrec, codeurDroitDeltaPosPrec, \
         typeSignal, offset, amplitude, frequence, Kp, Ki, Kd, moteurint, \
-        Ti, Td, Tt, ad, bd, br, \
         idecimLectureTension, decimLectureTension, tensionAlim
                 
     # Mesure de la vitesse du moteur grâce aux codeurs incrémentaux
@@ -225,57 +213,10 @@ def CalculVitesse():
         vrefDroit = 0.
         vrefGauche = 0.
         
-    # Calcul du PID
-    # Paramètres intermédiaires
-    Ti = Ki/(Kp+0.01)
-    if (Kd>0): # Si PID
-        ad = Tf/(Tf+dt2)
-        bd = Kd/(Tf+dt2)
-        Td = Kp/Kd
-        Tt = math.sqrt(Ti*Td)
-    else: # Si PI
-        ad = 0.
-        bd = 0.
-        Tt = 0.5*Ti
-    
-    br = dt2/(Tt+0.01)
 
-    # Terme proportionnel
-    P_x_Droit = Kp * (vrefDroit - omegaDroit)
-    P_x_Gauche = Kp * (vrefGauche - omegaGauche)
-
-    # Terme dérivé
-    D_x_Droit = ad * D_x_Droit - bd * (omegaDroit - yprecDroit)
-    D_x_Gauche = ad * D_x_Gauche - bd * (omegaGauche - yprecGauche)
-
-    # Calcul de la commande avant saturation
-    commande_avant_sat_Droit = P_x_Droit + I_x_Droit + D_x_Droit
-    commande_avant_sat_Gauche = P_x_Gauche + I_x_Gauche + D_x_Gauche
-
-    # Application de la saturation sur la commande
-    if (commande_avant_sat_Droit > umax):
-        commandeDroit = umax
-    elif (commande_avant_sat_Droit < umin):
-        commandeDroit = umin
-    else:
-        commandeDroit = commande_avant_sat_Droit
-    
-    if (commande_avant_sat_Gauche > umax) :
-        commandeGauche = umax
-    elif (commande_avant_sat_Gauche < umin):
-        commandeGauche = umin
-    else:
-        commandeGauche = commande_avant_sat_Gauche
-
-    # Terme intégral (sera utilisé lors du pas d'échantillonnage suivant)
-    I_x_Droit = I_x_Droit + Ki * dt2 * (vrefDroit - omegaDroit) + br * (commandeDroit - commande_avant_sat_Droit)
-    I_x_Gauche = I_x_Gauche + Ki * dt2 * (vrefGauche - omegaGauche) + br * (commandeGauche - commande_avant_sat_Gauche)
-    
-    # Stockage de la mesure courante pour utilisation lors du pas d'échantillonnage suivant
-    yprecDroit = omegaDroit
-    yprecGauche = omegaGauche
-
-    # Fin Calcul du PID
+    # Asservissement PID
+    commandeDroit = PID(0, vrefDroit, omegaDroit, Kp, Ki, Kd, Tf, umax, umin, dt2);
+    commandeGauche = PID(1, vrefGauche, omegaGauche, Kp, Ki, Kd, Tf, umax, umin, dt2);
     CommandeMoteurDroit(commandeDroit, tensionAlim)
     CommandeMoteurGauche(commandeGauche, tensionAlim)
     
@@ -300,6 +241,46 @@ def CalculVitesse():
             
     
 
+def PID(iMoteur, ref, mes, Kp, Ki, Kd, Tf, umax, umin, dt2):
+    global I_x, D_x, erreurprec
+    
+    # Calcul du PID
+    # Paramètres intermédiaires
+    br = 1. / (Kp + 0.0001)
+    ad = Tf / (Tf + dt2);
+    bd = Kd / (Tf + dt2);
+
+    # Calcul de la commande avant saturation
+    erreur = ref - mes
+    
+    # Terme proportionnel
+    P_x = Kp * erreur
+
+    # Terme dérivé
+    D_x[iMoteur] = ad * D_x[iMoteur] + bd * (erreur - erreurprec[iMoteur])
+
+    # Calcul de la commande avant saturation
+    if (Ki == 0):
+        I_x[iMoteur] = 0.
+    commande_avant_sat = P_x + I_x[iMoteur] + D_x[iMoteur]
+
+    # Application de la saturation sur la commande
+    if (commande_avant_sat > umax):
+        commande = umax
+    elif (commande_avant_sat < umin):
+        commande = umin
+    else:
+        commande = commande_avant_sat
+    
+    # Terme intégral (sera utilisé lors du pas d'échantillonnage suivant)
+    I_x[iMoteur] = I_x[iMoteur] + Ki * dt2 * (erreur + br * (commande - commande_avant_sat))
+    
+    # Stockage de la mesure courante pour utilisation lors du pas d'échantillonnage suivant
+    erreurprec[iMoteur] = erreur
+    
+    return commande
+
+    
     
 def CommandeMoteurDroit(tension, tensionAlim):
     # Cette fonction calcule et envoi les signaux PWM au pont en H
@@ -357,7 +338,7 @@ def CommandeMoteurGauche(tension, tensionAlim):
 def emitData():
     global tprec
     # Délai nécessaire pour que le serveur ait le temps de démarrer
-    delay(5000)
+    #delay(5000)
     tprec = time.time()
     while not noLoop: loop() # appelle fonction loop sans fin
 
@@ -367,7 +348,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         global socketOK
         print 'connection opened...'
         socketOK = True
-        self.callback = PeriodicCallback(self.sendToSocket, 20)
+        self.callback = PeriodicCallback(self.sendToSocket, 50)
         self.callback.start()
     
 

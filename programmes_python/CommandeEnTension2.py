@@ -7,7 +7,7 @@
 # http://boutique.3sigma.fr/12-robots
 #
 # Auteur: 3Sigma
-# Version 3.1 - 20/02/2017
+# Version 3.2 - 04/04/2018
 ##################################################################################
 
 # Importe les fonctions Arduino pour Python
@@ -299,7 +299,7 @@ def CommandeMoteurGauche(tension, tensionAlim):
         
 def emitData():
     # Délai nécessaire pour que le serveur ait le temps de démarrer
-    delay(5000)
+    #delay(5000)
     while not noLoop: loop() # appelle fonction loop sans fin
 
     
@@ -308,7 +308,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         global socketOK
         print 'connection opened...'
         socketOK = True
-        self.callback = PeriodicCallback(self.sendToSocket, 20)
+        self.callback = PeriodicCallback(self.sendToSocket, 50)
         self.callback.start()
     
 
